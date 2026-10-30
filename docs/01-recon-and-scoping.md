@@ -12,6 +12,7 @@ domain=example.com
 
 ```
 enum → httpx → vhost fuzz → takeover check → nuclei →
+DNS brute-force & permutation → JS endpoint mining →
 per-host recon (waymore / ffuf / .git / API check) →
 XSS / SQLi / SSTI / CORS / redirect testing → headless XSS confirmation
 ```
@@ -423,6 +424,73 @@ grep -o "<title>.*</title>" dom.html
 ```
 
 > If the page title now contains your unique marker, the payload executed — a confirmed, high-confidence XSS finding, not just a candidate. If the title is unchanged, the reflection didn't turn into execution (deprioritize, but keep the note — may still be worth a manual look).
+
+---
+
+## Stage 19 — Active DNS Brute-Force & Permutation `active`
+
+**When:** After Stage 1 (passive enumeration) and Stage 2 (liveness probe), once you have a confirmed `subdomains.txt` / `alive-subdomains.txt`. Run this when passive sources are clearly undercounting — large orgs with internal naming conventions (team/product codenames, env suffixes) rarely show up fully in CT logs or generic wordlists.
+
+**Why:** Passive sources only catch what's been publicly logged (CT certs, aggregators). Many real subdomains — especially internal admin/staging/regional hosts — never get a public cert and never show up there. Two complementary techniques close that gap: brute-forcing against a generic wordlist, and generating permutations from naming patterns you've *already* confirmed exist in scope (far higher hit rate than a generic list, since it reuses the target's own vocabulary — e.g. knowing `api-gray.$domain` and `payment-test.$domain` exist, it'll also try `payment-gray`, `api-test`, etc.).
+
+```bash
+# 1. generic wordlist brute-force (DNS-only, lower-profile than HTTP fuzzing)
+dnsx -d $domain -w ~/SecLists/Discovery/DNS/subdomains-top1million-5000.txt \
+  -silent -o dns-brute-out.txt
+
+# escalate to the larger list only if the quick pass looks productive
+dnsx -d $domain -w ~/SecLists/Discovery/DNS/subdomains-top1million-110000.txt \
+  -silent -o dns-brute-full.txt
+
+# 2. permutation-based — builds new candidate names FROM your existing subdomains.txt
+alterx -l subdomains.txt -silent > permutations.txt
+dnsx -l permutations.txt -silent -o permutations-live.txt
+
+# 3. merge everything new against what you already had
+cat dns-brute-out.txt dns-brute-full.txt permutations-live.txt 2>/dev/null | sort -u > brute-combined.txt
+comm -23 brute-combined.txt <(sort subdomains.txt) > brute-new-subdomains.txt
+wc -l brute-new-subdomains.txt
+```
+
+> Feed `brute-new-subdomains.txt` back into Stage 2 (httpx) to get live status before triaging. Permutation-based discovery (`alterx`) consistently outperforms a generic wordlist once you have ~50+ confirmed subdomains to build patterns from — re-run it every time `subdomains.txt` grows meaningfully, not just once.
+>
+> DNS brute-force is lower-profile than HTTP-based fuzzing (Stage 3/7) since it never touches the target's web server, but it's still active traffic against their DNS infrastructure — confirm the program doesn't explicitly prohibit DNS brute-forcing before running the full 110k-word list.
+
+---
+
+## Stage 20 — JS File Mining for Hidden Endpoints `passive`
+
+**When:** Per host, anytime after Stage 2 (needs a live-host list) — most effective once `alive-subdomains.txt` is reasonably large, since JS bundles across a target's fleet often reference each other's internal hostnames.
+
+**Why:** Front-end JS commonly hardcodes API base URLs, internal hostnames, and endpoint paths that were never meant to be discoverable — config objects, API client base URLs, feature-flag endpoints, admin panel links. This is read-only (just fetching public JS files the browser already loads) but routinely surfaces hosts and paths no passive source or brute-force wordlist would ever guess.
+
+```bash
+# 1. find every JS file referenced across all live hosts
+cat alive-subdomains.txt | sed 's#^#https://#' | subjs -c 20 > js-files.txt
+wc -l js-files.txt
+
+# 2. pull them all down
+mkdir -p js-dump
+i=0
+while read -r jsurl; do
+  i=$((i+1))
+  curl -sk --connect-timeout 5 --max-time 10 "$jsurl" -o "js-dump/js_$i.js" 2>/dev/null
+done < js-files.txt
+
+# 3. extract in-scope-looking hostnames
+grep -rohE "[a-zA-Z0-9][a-zA-Z0-9.-]*\.${domain//./\\.}" js-dump/ | sort -u > js-discovered-hosts.txt
+
+# 4. extract API-looking paths alongside (useful for Stage 7/9 targeting even without a new host)
+grep -rohE '"/[a-zA-Z0-9_/{}\-]{3,}"' js-dump/ | sort -u > js-discovered-paths.txt
+
+# 5. diff against what's already known
+comm -23 js-discovered-hosts.txt <(sort subdomains.txt) > js-new-subdomains.txt
+wc -l js-new-subdomains.txt
+```
+
+> Feed `js-new-subdomains.txt` back into Stage 2 (httpx) the same as Stage 19's output. Re-run this stage any time Stage 19 or passive enum adds new live hosts — each new host's JS bundles are a fresh source, not a one-time pull.
+>
+> `js-discovered-paths.txt` is also worth keeping even when it yields no new hosts — merge it into Stage 7/9's target path lists, since it often reveals real, non-guessable API routes a generic wordlist would never contain.
 
 ---
 
