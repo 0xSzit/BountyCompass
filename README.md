@@ -28,7 +28,7 @@ This repository is a **methodology and checklist reference**, not a tool. It doe
 
 | # | Section | Covers |
 |---|---------|--------|
-| 1 | [Recon & Scoping](docs/01-recon-and-scoping.md) | Subdomain enum, httpx, vhost fuzzing, takeover checks, Nuclei, archive/URL collection, content discovery, `.git` exposure, API/spec discovery — the full 18-stage pipeline in order |
+| 1 | [Recon & Scoping](...) | Subdomain enum, httpx, vhost fuzzing, DNS brute-force/permutation, JS endpoint mining, takeover checks, Nuclei, archive/URL collection, content discovery, `.git` exposure, API/spec discovery — the full 20-stage pipeline in order
 | 2 | [Authentication & Account Security](docs/02-authentication-account-security.md) | Signup abuse, pre-account-takeover, email verification bypass, password reset flaws, login, OTP/2FA bypass |
 | 3 | [API & Session Security](docs/03-api-session-security.md) | API manipulation techniques, JSON type confusion / type juggling, JWT misconfigurations |
 | 4 | [Injection & XSS](docs/04-injection-xss.md) | SQL injection, XSS, SSTI — detection payloads and confirmation methodology |
